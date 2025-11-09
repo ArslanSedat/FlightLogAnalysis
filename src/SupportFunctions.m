@@ -2,74 +2,92 @@ classdef SupportFunctions
     methods (Static)
         
         function createNewFigure(app)
-            % Créer TabGroup au premier appel si nécessaire
-            if ~isprop(app, 'TabGroup') || isempty(app.TabGroup)
-                % Supprimer le panel vide s'il existe
-                if isprop(app, 'PlotAreaPanel')
-                    delete(app.PlotAreaPanel);
+            try
+                figId = app.NextFigureId;
+                app.NextFigureId = app.NextFigureId + 1;
+                
+                % Créer TabGroup si nécessaire
+                if isempty(app.TabGroup) || ~isvalid(app.TabGroup)
+                    app.TabGroup = uitabgroup(app.GridLayout);
+                    app.TabGroup.Layout.Row = [1 3];
+                    app.TabGroup.Layout.Column = 2;
                 end
                 
-                % Créer le TabGroup
-                app.TabGroup = uitabgroup(app.GridLayout);
-                app.TabGroup.Layout.Row = [1 3];
-                app.TabGroup.Layout.Column = 2;
+                % Créer nouvel onglet
+                newTab = uitab(app.TabGroup, 'Title', sprintf('Figure %d', figId));
+                
+                % Grid layout
+                gridLayout = uigridlayout(newTab, [3, 2]);
+                gridLayout.RowHeight = {'1x', '1x', '0.15x'};
+                gridLayout.ColumnWidth = {'1x', '1x'};
+                
+                % Créer panner
+                pannerPanel = uipanel(gridLayout);
+                pannerPanel.Layout.Row = 3;
+                pannerPanel.Layout.Column = [1, 2];
+                pannerPanel.Title = 'Altitude Panner';
+                pannerPanel.Visible = app.PannerVisible;
+                
+                % Stocker dans un tableau (plus simple)
+                newFigure = struct();
+                newFigure.Id = figId;
+                newFigure.Tab = newTab;
+                newFigure.GridLayout = gridLayout;
+                newFigure.Axes = struct();
+                newFigure.Panner = pannerPanel;
+                
+                app.Figures = [app.Figures, newFigure];
+                
+                % Ajouter à l'arbre
+                figNode = uitreenode(app.Tree, 'Text', sprintf('Figure %d', figId));
+                figNode.NodeData = struct('Type', 'Figure', 'Id', figId, 'Visible', true);
+                
+                app.Tree.SelectedNodes = figNode;
+                app.SelectedNode = figNode;
+                
+                app.Label.Text = sprintf('Figure %d created - READY!', figId);
+                
+            catch ME
+                uialert(app.UIFigure, ME.message, 'Creation Error');
             end
-            
-            figId = app.NextFigureId;
-            app.NextFigureId = app.NextFigureId + 1;
-            
-            % Créer nouvel onglet
-            newTab = uitab(app.TabGroup);
-            newTab.Title = sprintf('Figure %d', figId);
-            
-            % Grid layout
-            gridLayout = uigridlayout(newTab);
-            gridLayout.RowHeight = {'1x', '1x', '0.3x'};
-            gridLayout.ColumnWidth = {'1x', '1x'};
-            
-            % Stocker info figure
-            app.Figures(figId).Tab = newTab;
-            app.Figures(figId).GridLayout = gridLayout;
-            app.Figures(figId).Axes = struct();
-            
-            % Créer panner
-            pannerAxes = uiaxes(gridLayout);
-            pannerAxes.Layout.Row = 3;
-            pannerAxes.Layout.Column = [1 2];
-            pannerAxes.XLabel.String = 'Time (s)';
-            pannerAxes.YLabel.String = 'Altitude';
-            pannerAxes.Title.String = 'Altitude Panner';
-            grid(pannerAxes, 'on');
-            
-            app.Figures(figId).Panner = pannerAxes;
-
-            if ~isempty(app.CurrentData)
-                SupportFunctions.updatePannerData(app, figId);
-            end
-            
-            % Ajouter l'interaction de glisser-déposer
-            SupportFunctions.setupPannerInteractions(app, figId);
-            
-            % Ajouter à l'arbre
-            figNode = uitreenode(app.Tree);
-            figNode.Text = sprintf('Figure %d', figId);
-            figNode.NodeData = struct('Type', 'Figure', 'Id', figId);
-            
-            app.Label.Text = sprintf('Figure %d créée - Sélectionnez-la dans l''arbre', figId);
-
-            app.Tree.Visible = 'on';
         end
         
         function addNewAxes(app, figId, type)
-            if ~isfield(app.Figures, figId), return; end
+            % Vérification plus robuste
+            if isempty(figId)
+                uialert(app.UIFigure, 'Please select a FIGURE in the tree first.', 'No Figure Selected');
+                return; 
+            end
             
+            if isempty(app.Figures)
+                uialert(app.UIFigure, 'No figures exist. Create a figure first.', 'No Figures');
+                return;
+            end
+            
+            % Trouver la figure dans le tableau
+            figureIndex = [];
+            for i = 1:length(app.Figures)
+                if app.Figures(i).Id == figId
+                    figureIndex = i;
+                    break;
+                end
+            end
+            
+            if isempty(figureIndex)
+                uialert(app.UIFigure, sprintf('Figure %d not found in app.Figures array', figId), 'Figure Not Found');
+                return; 
+            end
+            
+            disp(['Found Figure at index: ', num2str(figureIndex)]);
+            
+            % CONTINUER AVEC LE RESTE DU CODE...
             axesId = app.NextAxesId;
             app.NextAxesId = app.NextAxesId + 1;
             
-            gridLayout = app.Figures(figId).GridLayout;
+            gridLayout = app.Figures(figureIndex).GridLayout;
             
             % Trouver position libre
-            [row, col] = AppSupportMethods.findFreePosition(app, figId);
+            [row, col] = SupportFunctions.findFreePosition(app, figureIndex);
             if isempty(row)
                 uialert(app.UIFigure, 'No more space (max 4 axes).', 'Grid Full');
                 return;
@@ -84,23 +102,40 @@ classdef SupportFunctions
             newAxes.Title.String = sprintf('%s Axes %d', type, axesId);
             grid(newAxes, 'on');
             
-            % Stocker info
-            app.Figures(figId).Axes(axesId).Handle = newAxes;
-            app.Figures(figId).Axes(axesId).Type = type;
-            app.Figures(figId).Axes(axesId).Variables = {};
+            % Stocker info dans la structure Axes de la figure
+            if ~isfield(app.Figures(figureIndex), 'Axes') || isempty(fieldnames(app.Figures(figureIndex).Axes))
+                app.Figures(figureIndex).Axes = struct();
+            end
+                    
+            axFieldName = sprintf('axes%d', axesId);
+            app.Figures(figureIndex).Axes.(axFieldName) = struct();
+            app.Figures(figureIndex).Axes.(axFieldName).Handle = newAxes;
+            app.Figures(figureIndex).Axes.(axFieldName).Type = type;
+            app.Figures(figureIndex).Axes.(axFieldName).Variables = {};
+            app.Figures(figureIndex).Axes.(axFieldName).Row = row;
+            app.Figures(figureIndex).Axes.(axFieldName).Column = col;
             
             % Ajouter à l'arbre
-            figNode = AppSupportMethods.findTreeNode(app, sprintf('Figure %d', figId));
+            figNode = SupportFunctions.findTreeNode(app, sprintf('Figure %d', figId));
             if ~isempty(figNode)
                 axesNode = uitreenode(figNode);
                 axesNode.Text = sprintf('Axes %d (%s)', axesId, type);
-                axesNode.NodeData = struct('Type', 'Axes', 'FigureId', figId, 'AxesId', axesId);
+                axesNode.NodeData = struct('Type', 'Axes', 'FigureId', figId, 'AxesId', axesId, 'Visible', true);
             end
             
             % Configurer auto si données disponibles
             if ~isempty(app.CurrentData)
-                AppSupportMethods.configureAxesWithSampleData(app, figId, axesId);
+                SupportFunctions.configureAxesWithSampleData(app, figureIndex, axesId);
+            else
+                % Afficher des données d'exemple même sans données chargées
+                SupportFunctions.plotSampleData(newAxes, type);
             end
+            
+            % Forcer l'affichage
+            drawnow;
+            
+            app.Label.Text = sprintf('Axes %d added to Figure %d', axesId, figId);
+            disp(['SUCCESS: Axes ', num2str(axesId), ' created in Figure ', num2str(figId)]);
         end
         
         function deleteFigure(app, figId)
@@ -115,7 +150,7 @@ classdef SupportFunctions
                 delete(app.Figures(figId).Tab);
                 app.Figures = rmfield(app.Figures, figId);
                 
-                figNode = AppSupportMethods.findTreeNode(app, sprintf('Figure %d', figId));
+                figNode = SupportFunctions.findTreeNode(app, sprintf('Figure %d', figId));
                 if ~isempty(figNode)
                     delete(figNode);
                 end
@@ -129,7 +164,7 @@ classdef SupportFunctions
                 delete(app.Figures(figId).Axes(axesId).Handle);
                 app.Figures(figId).Axes = rmfield(app.Figures(figId).Axes, axesId);
                 
-                axesNode = AppSupportMethods.findTreeNode(app, sprintf('Axes %d', axesId));
+                axesNode = SupportFunctions.findTreeNode(app, sprintf('Axes %d', axesId));
                 if ~isempty(axesNode)
                     delete(axesNode);
                 end
@@ -177,20 +212,47 @@ classdef SupportFunctions
             end
         end
         
-        function [row, col] = findFreePosition(app, figId)
+        function [row, col] = findFreePosition(app, figureIndex)
+            % Positions disponibles dans la grille 2x2
             positions = [1,1; 1,2; 2,1; 2,2];
             
+            % Vérifier si la figure existe et si la structure Axes est valide
+            if figureIndex > length(app.Figures) || ~isfield(app.Figures(figureIndex), 'Axes')
+                % Retourner la première position si pas d'axes
+                row = positions(1,1);
+                col = positions(1,2);
+                disp(['First axes - Position: (', num2str(row), ',', num2str(col), ')']);
+                return;
+            end
+            
+            % Vérifier si Axes est vide
+            if isempty(fieldnames(app.Figures(figureIndex).Axes))
+                row = positions(1,1);
+                col = positions(1,2);
+                disp(['First axes - Position: (', num2str(row), ',', num2str(col), ')']);
+                return;
+            end
+            
+            % Vérifier chaque position
             for i = 1:size(positions,1)
                 row = positions(i,1);
                 col = positions(i,2);
                 occupied = false;
                 
-                if isfield(app.Figures, figId)
-                    axesIds = fieldnames(app.Figures(figId).Axes);
-                    for j = 1:length(axesIds)
-                        axId = str2double(axesIds{j});
-                        if app.Figures(figId).Axes(axId).Handle.Layout.Row == row && ...
-                           app.Figures(figId).Axes(axId).Handle.Layout.Column == col
+                axesFields = fieldnames(app.Figures(figureIndex).Axes);
+                
+                for j = 1:length(axesFields)
+                    % VÉRIFICATION SÉCURISÉE
+                    if isstruct(app.Figures(figureIndex).Axes.(axesFields{j})) && ...
+                       isfield(app.Figures(figureIndex).Axes.(axesFields{j}), 'Handle') && ...
+                       isfield(app.Figures(figureIndex).Axes.(axesFields{j}), 'Row') && ...
+                       isfield(app.Figures(figureIndex).Axes.(axesFields{j}), 'Column')
+                       
+                        axHandle = app.Figures(figureIndex).Axes.(axesFields{j}).Handle;
+                        axRow = app.Figures(figureIndex).Axes.(axesFields{j}).Row;
+                        axCol = app.Figures(figureIndex).Axes.(axesFields{j}).Column;
+                        
+                        if isvalid(axHandle) && axRow == row && axCol == col
                             occupied = true;
                             break;
                         end
@@ -198,10 +260,15 @@ classdef SupportFunctions
                 end
                 
                 if ~occupied
+                    disp(['Free position found: (', num2str(row), ',', num2str(col), ')']);
                     return;
                 end
             end
-            row = []; col = [];
+            
+            % Si toutes les positions sont occupées
+            row = [];
+            col = [];
+            disp('No free positions found - grid is full');
         end
         
         function configureAxesWithSampleData(app, figId, axesId)
@@ -238,7 +305,7 @@ classdef SupportFunctions
                 title(axesHandle, sprintf('%s Plot - Real Data', axesInfo.Type));
                 
             catch
-                AppSupportMethods.plotSampleData(axesHandle, axesInfo.Type);
+                SupportFunctions.plotSampleData(axesHandle, axesInfo.Type);
             end
         end
         
@@ -272,73 +339,155 @@ classdef SupportFunctions
             figId = [];
             axesId = [];
             
-            if isempty(app.SelectedNode) || ~isprop(app.SelectedNode, 'NodeData')
+            if isempty(app.SelectedNode)
+                disp('No node selected');
                 return;
             end
             
-            nodeData = app.SelectedNode.NodeData;
+            nodeText = app.SelectedNode.Text;
+            disp(['Selected: "', nodeText, '"']);
             
-            if isfield(nodeData, 'Type')
-                if strcmp(nodeData.Type, 'Figure')
-                    figId = nodeData.Id;
-                elseif strcmp(nodeData.Type, 'Axes') && isfield(nodeData, 'FigureId')
-                    figId = nodeData.FigureId;
-                    axesId = nodeData.AxesId;
+            if startsWith(nodeText, 'Figure ')
+                figId = str2double(regexp(nodeText, '\d+', 'match', 'once'));
+                disp(['Parsed Figure ID: ', num2str(figId)]);
+                
+                % VÉRIFIER SI LA FIGURE EXISTE DANS LE TABLEAU
+                if isempty(app.Figures)
+                    disp('ERROR: app.Figures is empty');
+                    figId = [];
+                    return;
+                end
+                
+                figureExists = false;
+                for i = 1:length(app.Figures)
+                    if app.Figures(i).Id == figId
+                        figureExists = true;
+                        break;
+                    end
+                end
+                
+                if ~figureExists
+                    disp(['ERROR: Figure ', num2str(figId), ' not found in app.Figures array']);
+                    figId = [];
+                else
+                    disp(['SUCCESS: Figure ', num2str(figId), ' found in array']);
+                end
+                
+            elseif startsWith(nodeText, 'Axes ')
+                % Pour un axe, trouver la figure parente
+                if ~isempty(app.SelectedNode.Parent)
+                    parentText = app.SelectedNode.Parent.Text;
+                    if startsWith(parentText, 'Figure ')
+                        figId = str2double(regexp(parentText, '\d+', 'match', 'once'));
+                        axesId = str2double(regexp(nodeText, '\d+', 'match', 'once'));
+                        disp(['Parsed - Figure: ', num2str(figId), ', Axes: ', num2str(axesId)]);
+                    end
+                end
+            end
+        end
+
+        function figureIndex = findFigureIndex(app, figId)
+            figureIndex = [];
+            for i = 1:length(app.Figures)
+                if app.Figures(i).Id == figId
+                    figureIndex = i;
+                    break;
                 end
             end
         end
         
-        function updateAxesPlot(app, figId, axesId)
-            if ~isfield(app.Figures, figId) || ~isfield(app.Figures(figId).Axes, axesId)
+        function updateAxesPlot(app, figureIndex, axesId)
+            disp(['=== UPDATE AXES PLOT DEBUG ===']);
+            disp(['figureIndex: ', num2str(figureIndex)]);
+            disp(['axesId: ', num2str(axesId)]);
+            
+            if figureIndex > length(app.Figures) || ~isfield(app.Figures(figureIndex), 'Axes')
+                disp('ERROR: Figure not found or no Axes field');
                 return;
             end
             
-            axesInfo = app.Figures(figId).Axes(axesId);
+            axFieldName = sprintf('axes%d', axesId);
+            if ~isfield(app.Figures(figureIndex).Axes, axFieldName)
+                disp(['ERROR: Axes field ', axFieldName, ' not found']);
+                return;
+            end
+            
+            axesInfo = app.Figures(figureIndex).Axes.(axFieldName);
             axesHandle = axesInfo.Handle;
             dataManager = app.CurrentData;
             
+            disp(['Axes type: ', axesInfo.Type]);
+            disp(['Axes variables: ', strjoin(axesInfo.Variables, ', ')]);
+            
+            % Vider l'axe
             cla(axesHandle);
             
             if isempty(axesInfo.Variables)
-                AppSupportMethods.plotSampleData(axesHandle, axesInfo.Type);
+                disp('No variables selected - plotting sample data');
+                SupportFunctions.plotSampleData(axesHandle, axesInfo.Type);
                 return;
             end
             
             try
                 time = dataManager.getDataForPlotting('time_s');
+                disp(['Time data length: ', num2str(length(time))]);
+                
                 hold(axesHandle, 'on');
                 
                 colors = ['b', 'r', 'g', 'm', 'c', 'k'];
+                legendEntries = {};
                 
                 for i = 1:length(axesInfo.Variables)
                     varName = axesInfo.Variables{i};
-                    yData = dataManager.getDataForPlotting(varName);
-                    color = colors(mod(i-1, length(colors)) + 1);
+                    disp(['Processing variable: ', varName]);
                     
-                    if strcmp(axesInfo.Type, 'line')
-                        plot(axesHandle, time, yData, [color, '-'], 'LineWidth', 1.5, ...
-                            'DisplayName', varName);
-                    else
-                        scatter(axesHandle, time, yData, 'filled', ...
-                            'DisplayName', varName);
+                    try
+                        yData = dataManager.getDataForPlotting(varName);
+                        disp(['Data length for ', varName, ': ', num2str(length(yData))]);
+                        
+                        color = colors(mod(i-1, length(colors)) + 1);
+                        
+                        if strcmp(axesInfo.Type, 'line')
+                            plot(axesHandle, time, yData, [color, '-'], 'LineWidth', 1.5, ...
+                                'DisplayName', varName);
+                        else
+                            scatter(axesHandle, time, yData, 'filled', ...
+                                'DisplayName', varName);
+                        end
+                        legendEntries{end+1} = varName;
+                        
+                    catch varError
+                        disp(['ERROR processing variable ', varName, ': ', varError.message]);
                     end
                 end
                 hold(axesHandle, 'off');
                 
-                if length(axesInfo.Variables) > 1
+                % Configurer la légende
+                if length(legendEntries) > 1
                     legend(axesHandle, 'show');
+                elseif isscalar(legendEntries)
+                    ylabel(axesHandle, sprintf('%s (%s)', legendEntries{1}, ...
+                        dataManager.getUnit(legendEntries{1})));
                 end
                 
-                if isscalar(axesInfo.Variables)
-                    ylabel(axesHandle, sprintf('%s (%s)', axesInfo.Variables{1}, ...
-                        dataManager.getUnit(axesInfo.Variables{1})));
+                % Titre et grille
+                if strcmp(axesInfo.Type, 'line')
+                    title(axesHandle, 'Line Plot - Flight Data');
                 else
-                    ylabel(axesHandle, 'Multiple Variables');
+                    title(axesHandle, 'Scatter Plot - Flight Data');
                 end
+                xlabel(axesHandle, 'Time (s)');
+                grid(axesHandle, 'on');
                 
-            catch
-                AppSupportMethods.plotSampleData(axesHandle, axesInfo.Type);
+                disp('SUCCESS: Axes plot updated');
+                
+            catch ME
+                disp(['ERROR in updateAxesPlot: ', ME.message]);
+                SupportFunctions.plotSampleData(axesHandle, axesInfo.Type);
             end
+            
+            % Forcer le rafraîchissement
+            drawnow;
         end
     end
 end
