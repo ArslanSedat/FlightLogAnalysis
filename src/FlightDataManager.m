@@ -21,8 +21,27 @@ classdef FlightDataManager < handle
                 obj.RawData = readtable(filename);
                 obj.CurrentFile = filename;
                 obj.ReferenceLLA = [obj.RawData.lat_rad(1), obj.RawData.lon_rad(1), obj.RawData.alt_m(1)];
+                
+                fprintf('Data loaded successfully: %s\n', filename);
+                fprintf('Rows: %d, Columns: %d\n', height(obj.RawData), width(obj.RawData));
+                fprintf('Variables: %s\n', strjoin(obj.RawData.Properties.VariableNames, ', '));
+                
+                % EXÉCUTER LES CALCULS
+                fprintf('Executing calculations...\n');
+                obj.calculateAll();
+                fprintf('Calculations completed.\n');
+                
+                % Afficher les variables calculées
+                if ~isempty(obj.CalculatedData)
+                    calcVars = fieldnames(obj.CalculatedData);
+                    fprintf('Calculated variables: %s\n', strjoin(calcVars, ', '));
+                end
+                
                 success = true;
-            catch, success = false; end
+            catch ME
+                fprintf('ERROR loading data: %s\n', ME.message);
+                success = false;
+            end
         end
         
         function calculateAll(obj)
@@ -35,7 +54,7 @@ classdef FlightDataManager < handle
         
         function quaternionToEuler(obj)
             q = [obj.RawData.quat_e0, obj.RawData.quat_ex, obj.RawData.quat_ey, obj.RawData.quat_ez];
-            eul = quat2eul(q, 'ZYX'); % Utilisation de la fonction native !
+            eul = quat2eul(q, 'ZYX');
             obj.CalculatedData.yaw_rad = eul(:,1)';
             obj.CalculatedData.pitch_rad = eul(:,2)';
             obj.CalculatedData.roll_rad = eul(:,3)';
@@ -77,16 +96,40 @@ classdef FlightDataManager < handle
         
         function rho = calculateAirDensity(obj)
             alt = obj.RawData.alt_m;
-            [~, ~, rho] = atmoscoesa(alt); % Fonction native MATLAB !
+            [~, ~, rho] = atmoscoesa(alt);
         end
         
         function data = getDataForPlotting(obj, variableName)
-            if ismember(variableName, obj.RawData.Properties.VariableNames)
-                data = obj.RawData.(variableName);
-            else
-                data = obj.CalculatedData.(variableName);
+            try
+                fprintf('getDataForPlotting: searching for "%s"\n', variableName);
+                
+                % Vérifier d'abord dans RawData
+                if ismember(variableName, obj.RawData.Properties.VariableNames)
+                    data = obj.RawData.(variableName);
+                    fprintf('SUCCESS: Found "%s" in RawData, length: %d\n', variableName, length(data));
+                    
+                % Vérifier ensuite dans CalculatedData
+                elseif isfield(obj.CalculatedData, variableName)
+                    data = obj.CalculatedData.(variableName);
+                    fprintf('SUCCESS: Found "%s" in CalculatedData, length: %d\n', variableName, length(data));
+                    
+                else
+                    fprintf('ERROR: Variable "%s" not found in RawData or CalculatedData\n', variableName);
+                    fprintf('RawData variables: %s\n', strjoin(obj.RawData.Properties.VariableNames, ', '));
+                    if ~isempty(obj.CalculatedData)
+                        fprintf('CalculatedData variables: %s\n', strjoin(fieldnames(obj.CalculatedData), ', '));
+                    end
+                    
+                    error('Variable "%s" not found in dataset', variableName);
+                end
+                
+                % Appliquer la conversion d'unités
+                data = obj.convertUnits(data, variableName);
+                
+            catch ME
+                fprintf('CRITICAL ERROR in getDataForPlotting for "%s": %s\n', variableName, ME.message);
+                rethrow(ME);
             end
-            data = obj.convertUnits(data, variableName);
         end
         
         function data = convertUnits(obj, data, varName)
