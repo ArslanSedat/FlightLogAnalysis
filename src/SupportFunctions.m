@@ -42,6 +42,13 @@ classdef SupportFunctions
             grid(pannerAxes, 'on');
             
             app.Figures(figId).Panner = pannerAxes;
+
+            if ~isempty(app.CurrentData)
+                SupportFunctions.updatePannerData(app, figId);
+            end
+            
+            % Ajouter l'interaction de glisser-déposer
+            SupportFunctions.setupPannerInteractions(app, figId);
             
             % Ajouter à l'arbre
             figNode = uitreenode(app.Tree);
@@ -49,6 +56,8 @@ classdef SupportFunctions
             figNode.NodeData = struct('Type', 'Figure', 'Id', figId);
             
             app.Label.Text = sprintf('Figure %d créée - Sélectionnez-la dans l''arbre', figId);
+
+            app.Tree.Visible = 'on';
         end
         
         function addNewAxes(app, figId, type)
@@ -98,7 +107,7 @@ classdef SupportFunctions
             if isfield(app.Figures, figId)
                 % Empêcher suppression si dernière figure
                 remainingFigs = fieldnames(app.Figures);
-                if length(remainingFigs) == 1
+                if isscalar(remainingFigs)
                     uialert(app.UIFigure, 'Cannot delete the last figure.', 'Last Figure');
                     return;
                 end
@@ -260,7 +269,6 @@ classdef SupportFunctions
         end
         
         function [figId, axesId] = getSelectedIds(app)
-            % Retourne les IDs de la sélection actuelle
             figId = [];
             axesId = [];
             
@@ -269,11 +277,14 @@ classdef SupportFunctions
             end
             
             nodeData = app.SelectedNode.NodeData;
-            if strcmp(nodeData.Type, 'Figure')
-                figId = nodeData.Id;
-            elseif strcmp(nodeData.Type, 'Axes')
-                figId = nodeData.FigureId;
-                axesId = nodeData.AxesId;
+            
+            if isfield(nodeData, 'Type')
+                if strcmp(nodeData.Type, 'Figure')
+                    figId = nodeData.Id;
+                elseif strcmp(nodeData.Type, 'Axes') && isfield(nodeData, 'FigureId')
+                    figId = nodeData.FigureId;
+                    axesId = nodeData.AxesId;
+                end
             end
         end
         
@@ -318,7 +329,7 @@ classdef SupportFunctions
                     legend(axesHandle, 'show');
                 end
                 
-                if length(axesInfo.Variables) == 1
+                if isscalar(axesInfo.Variables)
                     ylabel(axesHandle, sprintf('%s (%s)', axesInfo.Variables{1}, ...
                         dataManager.getUnit(axesInfo.Variables{1})));
                 else
