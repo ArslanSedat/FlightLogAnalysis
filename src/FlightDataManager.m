@@ -12,7 +12,7 @@ classdef FlightDataManager < handle
         CalculatedData struct         % Struct containing computed parameters
         CurrentFile string            % Path to the current data file
         ReferenceLLA double           % Reference Latitude, Longitude, Altitude
-        Units string = 'SI'           % Unit system
+        Units string = 'SI'           % Unit system (
     end
 
     properties (Constant)
@@ -132,6 +132,8 @@ classdef FlightDataManager < handle
             else
                 data = [];
             end
+
+            % Apply unit conversion if required
             data = obj.convertUnits(data, variableName);
         end
 
