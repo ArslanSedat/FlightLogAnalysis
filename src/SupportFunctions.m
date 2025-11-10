@@ -142,29 +142,20 @@ classdef SupportFunctions
         end
 
         function updateMainAxesFromPanner(app, idx)
-            if idx > length(app.Figures) || ~isfield(app.Figures(idx), 'LeftBar')
-                return;
-            end
+            if idx > length(app.Figures) || ~isfield(app.Figures(idx), 'LeftBar'), return; end
             
-            leftBar = app.Figures(idx).LeftBar;
-            rightBar = app.Figures(idx).RightBar;
+            timeMin = app.Figures(idx).LeftBar.XData(1);
+            timeMax = app.Figures(idx).RightBar.XData(1);
             
-            xMin = leftBar.XData(1);
-            xMax = rightBar.XData(1);
-            
-            fprintf('Updating main axes to [%.2f, %.2f]\n', xMin, xMax);
-            
-            % Mettre à jour TOUS les axes de cette figure
             if isfield(app.Figures(idx), 'Axes')
                 axesFields = fieldnames(app.Figures(idx).Axes);
                 for i = 1:length(axesFields)
                     axInfo = app.Figures(idx).Axes.(axesFields{i});
                     if isfield(axInfo, 'Handle') && isvalid(axInfo.Handle)
-                        try
-                            axInfo.Handle.XLim = [xMin, xMax];
-                            drawnow limitrate;
-                        catch
-                            % Ignorer les erreurs sur axes invalides
+                        if strcmp(axInfo.Type, 'line')
+                            axInfo.Handle.XLim = [timeMin, timeMax];
+                        else
+                            SupportFunctions.filterScatterByTime(app, idx, axesFields{i}, timeMin, timeMax);
                         end
                     end
                 end
@@ -271,199 +262,7 @@ classdef SupportFunctions
             % Callback pour le fond (déplacement de la vue)
             pannerAxes.ButtonDownFcn = @(src, event) SupportFunctions.startBackgroundDrag(app, idx, src, event);
         end
-        
-        function startDrag(app, idx, mode)
-            app.Figures(idx).DraggingMode = mode;
-            pannerAxes = app.Figures(idx).Panner;
-            app.Figures(idx).DragStartPoint = pannerAxes.CurrentPoint(1, 1:2);
-            app.Figures(idx).DragStartRect = app.Figures(idx).ViewRect.Position;
-            
-            % Feedback visuel SIMPLE
-            if strcmp(mode, 'left')
-                app.Figures(idx).LeftHandle.MarkerFaceColor = [1.0, 0.3, 0.3];
-            elseif strcmp(mode, 'right')
-                app.Figures(idx).RightHandle.MarkerFaceColor = [1.0, 0.3, 0.3];
-            elseif strcmp(mode, 'center')
-                app.Figures(idx).ViewRect.FaceColor = [1.0, 0.8, 0.8]; % Rose clair
-            end
-            
-            % Configurer callbacks globaux
-            app.UIFigure.WindowButtonMotionFcn = @(src, event) duringDrag(app, idx);
-            app.UIFigure.WindowButtonUpFcn = @(src, event) endDrag(app, idx);
-        end
-        
-        function endDrag(app, idx)
-            % Restaurer couleurs UNIFORMES
-            if isfield(app.Figures(idx), 'LeftHandle')
-                app.Figures(idx).LeftHandle.MarkerFaceColor = [0.2, 0.6, 1.0];
-            end
-            if isfield(app.Figures(idx), 'RightHandle')
-                app.Figures(idx).RightHandle.MarkerFaceColor = [0.2, 0.6, 1.0];
-            end
-            if isfield(app.Figures(idx), 'ViewRect')
-                app.Figures(idx).ViewRect.FaceColor = [0.8, 0.9, 1.0]; % MÊME COULEUR QUE updatePannerData
-            end
-            
-            app.Figures(idx).DraggingMode = '';
-            
-            % Nettoyer les callbacks globaux
-            app.UIFigure.WindowButtonMotionFcn = [];
-            app.UIFigure.WindowButtonUpFcn = [];
-        end
-
-        function duringDrag(app, idx)
-            if idx > length(app.Figures) || isempty(app.Figures(idx).DraggingMode), return; 
-            end
-            
-            pannerAxes = app.Figures(idx).Panner;
-            currentPoint = pannerAxes.CurrentPoint(1, 1:2);
-            startPoint = app.Figures(idx).DragStartPoint;
-            startRect = app.Figures(idx).DragStartRect;
-            timeData = app.Figures(idx).PannerTimeData;
-            
-            viewRect = app.Figures(idx).ViewRect;
-            leftHandle = app.Figures(idx).LeftHandle;
-            rightHandle = app.Figures(idx).RightHandle;
-            
-            deltaX = currentPoint(1) - startPoint(1);
-            
-            switch app.Figures(idx).DraggingMode
-                case 'left'
-                    newX = startRect(1) + deltaX;
-                    newWidth = startRect(3) - deltaX;
-                    if newWidth > 0.01 * range(timeData) && newX >= min(timeData)
-                        viewRect.Position = [newX, startRect(2), newWidth, startRect(4)];
-                        leftHandle.XData = newX;
-                        rightHandle.XData = newX + newWidth;
-                    end
-                    
-                case 'right'
-                    newWidth = startRect(3) + deltaX;
-                    if newWidth > 0.01 * range(timeData) && (startRect(1) + newWidth) <= max(timeData)
-                        viewRect.Position = [startRect(1), startRect(2), newWidth, startRect(4)];
-                        leftHandle.XData = startRect(1);
-                        rightHandle.XData = startRect(1) + newWidth;
-                    end
-                    
-                case 'center'
-                    newX = startRect(1) + deltaX;
-                    newX = max(min(timeData), min(newX, max(timeData) - startRect(3)));
-                    viewRect.Position = [newX, startRect(2), startRect(3), startRect(4)];
-                    leftHandle.XData = newX;
-                    rightHandle.XData = newX + startRect(3);
-                    app.Figures(idx).DragStartPoint = currentPoint;
-                    
-                case 'background'
-                    newCenter = currentPoint(1);
-                    rectWidth = viewRect.Position(3);
-                    newX = newCenter - rectWidth/2;
-                    newX = max(min(timeData), min(newX, max(timeData) - rectWidth));
-                    viewRect.Position = [newX, startRect(2), rectWidth, startRect(4)];
-                    leftHandle.XData = newX;
-                    rightHandle.XData = newX + rectWidth;
-            end
-            
-            SupportFunctions.updateMainAxesFromPanner(app, idx);
-        end
-
-        function startPannerDrag(app, idx, mode, src, event)
-            if idx > length(app.Figures), return; end
-            
-            app.Figures(idx).DraggingMode = mode;
-            app.Figures(idx).DragStartPoint = src.Parent.CurrentPoint(1, 1:2);
-            app.Figures(idx).DragStartRect = app.Figures(idx).ViewRect.Position;
-            
-            % Feedback visuel
-            if strcmp(mode, 'left') || strcmp(mode, 'right')
-                src.MarkerFaceColor = [1.0, 0.3, 0.3]; % Rouge pendant le drag
-            elseif strcmp(mode, 'center')
-                app.Figures(idx).ViewRect.FaceColor = [1.0, 0.3, 0.3, 0.3];
-            end
-            
-            fprintf('Started %s drag\n', mode);
-        end
-
-        function duringPannerDrag(app, idx, src, event)
-            if idx > length(app.Figures) || isempty(app.Figures(idx).DraggingMode), return; end
-            
-            pannerAxes = app.Figures(idx).Panner;
-            currentPoint = pannerAxes.CurrentPoint(1, 1:2);
-            startPoint = app.Figures(idx).DragStartPoint;
-            startRect = app.Figures(idx).DragStartRect;
-            timeData = app.Figures(idx).PannerTimeData;
-            
-            viewRect = app.Figures(idx).ViewRect;
-            leftHandle = app.Figures(idx).LeftHandle;
-            rightHandle = app.Figures(idx).RightHandle;
-            
-            deltaX = currentPoint(1) - startPoint(1);
-            
-            switch app.Figures(idx).DraggingMode
-                case 'left'
-                    % Redimensionner depuis la gauche
-                    newX = startRect(1) + deltaX;
-                    newWidth = startRect(3) - deltaX;
-                    
-                    if newWidth > 0.01 * range(timeData) && newX >= min(timeData)
-                        viewRect.Position = [newX, startRect(2), newWidth, startRect(4)];
-                        leftHandle.XData = newX;
-                        rightHandle.XData = newX + newWidth;
-                    end
-                    
-                case 'right'
-                    % Redimensionner depuis la droite
-                    newWidth = startRect(3) + deltaX;
-                    
-                    if newWidth > 0.01 * range(timeData) && (startRect(1) + newWidth) <= max(timeData)
-                        viewRect.Position = [startRect(1), startRect(2), newWidth, startRect(4)];
-                        leftHandle.XData = startRect(1);
-                        rightHandle.XData = startRect(1) + newWidth;
-                    end
-                    
-                case 'center'
-                    % Déplacer toute la vue
-                    newX = startRect(1) + deltaX;
-                    newX = max(min(timeData), min(newX, max(timeData) - startRect(3)));
-                    
-                    viewRect.Position = [newX, startRect(2), startRect(3), startRect(4)];
-                    leftHandle.XData = newX;
-                    rightHandle.XData = newX + startRect(3);
-                    app.Figures(idx).DragStartPoint = currentPoint;
-                    
-                case 'background'
-                    % Cliquer en dehors → centrer la vue sur ce point
-                    newCenter = currentPoint(1);
-                    rectWidth = viewRect.Position(3);
-                    newX = newCenter - rectWidth/2;
-                    newX = max(min(timeData), min(newX, max(timeData) - rectWidth));
-                    
-                    viewRect.Position = [newX, startRect(2), rectWidth, startRect(4)];
-                    leftHandle.XData = newX;
-                    rightHandle.XData = newX + rectWidth;
-            end
-            
-            % Mettre à jour les axes principaux
-            SupportFunctions.updateMainAxesFromPanner(app, idx);
-            drawnow;
-        end
-
-        function endPannerDrag(app, idx, src, event)
-            if idx > length(app.Figures), return; end
-            
-            % Restaurer les couleurs normales
-            if isfield(app.Figures(idx), 'LeftHandle')
-                app.Figures(idx).LeftHandle.MarkerFaceColor = [0.2, 0.6, 1.0];
-            end
-            if isfield(app.Figures(idx), 'RightHandle')
-                app.Figures(idx).RightHandle.MarkerFaceColor = [0.2, 0.6, 1.0];
-            end
-            if isfield(app.Figures(idx), 'ViewRect')
-                app.Figures(idx).ViewRect.FaceColor = [0.2, 0.6, 1.0, 0.3];
-            end
-            
-            app.Figures(idx).DraggingMode = '';
-        end
-
+                
         function duringBarDrag(app, idx, src, event)
             if idx > length(app.Figures) || isempty(app.Figures(idx).DraggingBar)
                 return;
@@ -552,34 +351,29 @@ classdef SupportFunctions
         
         function deleteAxes(app, figId, axesId)
             figureIndex = SupportFunctions.findFigureIndex(app, figId);
-            if isempty(figureIndex)
-                fprintf('Figure %d not found for axes deletion\n', figId);
-                return;
-            end
+            if isempty(figureIndex), return; end
             
             axFieldName = sprintf('axes%d', axesId);
             if isfield(app.Figures(figureIndex).Axes, axFieldName)
-                % Supprimer l'axe graphique
-                axesInfo = app.Figures(figureIndex).Axes.(axFieldName);
-                if isfield(axesInfo, 'Handle') && isvalid(axesInfo.Handle)
-                    delete(axesInfo.Handle);
-                end
-                
-                % Supprimer de la structure
+                delete(app.Figures(figureIndex).Axes.(axFieldName).Handle);
                 app.Figures(figureIndex).Axes = rmfield(app.Figures(figureIndex).Axes, axFieldName);
                 
-                % Supprimer le node de l'arbre
-                axesNode = SupportFunctions.findTreeNode(app, sprintf('Axes %d', axesId));
-                if ~isempty(axesNode) && isvalid(axesNode)
-                    delete(axesNode);
+                % Reconstruction simple de l'arbre
+                delete(app.Tree.Children);
+                for i = 1:length(app.Figures)
+                    figNode = uitreenode(app.Tree, 'Text', sprintf('Figure %d', app.Figures(i).Id));
+                    if isfield(app.Figures(i), 'Axes')
+                        axesFields = fieldnames(app.Figures(i).Axes);
+                        for j = 1:length(axesFields)
+                            axesInfo = app.Figures(i).Axes.(axesFields{j});
+                            axesNode = uitreenode(figNode);
+                            axesNode.Text = sprintf('Axes %d (%s)', str2double(regexp(axesFields{j}, '\d+', 'match')), axesInfo.Type);
+                        end
+                    end
                 end
-                
-                app.Label.Text = sprintf('Axes %d deleted', axesId);
-            else
-                fprintf('Axes %d not found in Figure %d\n', axesId, figId);
             end
         end
-        
+
         function figureIndex = findFigureIndex(app, figId)
             figureIndex = [];
             for i = 1:length(app.Figures)
@@ -590,54 +384,6 @@ classdef SupportFunctions
             end
         end
 
-        function saveFigureAsPNG(app, figId)
-            figureIndex = SupportFunctions.findFigureIndex(app, figId);
-            if isempty(figureIndex)
-                uialert(app.UIFigure, sprintf('Figure %d not found', figId), 'Error');
-                return;
-            end
-            
-            [file, path] = uiputfile('*.png', 'Save Figure as PNG', sprintf('figure_%d.png', figId));
-            if isequal(file, 0), return; end
-            
-            filename = fullfile(path, file);
-            
-            try
-                % Capturer le contenu du tab
-                fig = figure('Visible', 'off');
-                copyobj(app.Figures(figureIndex).GridLayout.Children, fig);
-                saveas(fig, filename, 'png');
-                close(fig);
-                app.Label.Text = sprintf('Saved: %s', file);
-            catch ME
-                uialert(app.UIFigure, sprintf('Save failed: %s', ME.message), 'Save Error');
-            end
-        end
-        
-        function saveFigureAsFIG(app, figId)
-            figureIndex = SupportFunctions.findFigureIndex(app, figId);
-            if isempty(figureIndex)
-                uialert(app.UIFigure, sprintf('Figure %d not found', figId), 'Error');
-                return;
-            end
-            
-            [file, path] = uiputfile('*.fig', 'Save Figure as FIG', sprintf('figure_%d.fig', figId));
-            if isequal(file, 0), return; end
-            
-            filename = fullfile(path, file);
-            
-            try
-                % Créer une figure classique
-                newFig = figure('Visible', 'off');
-                copyobj(app.Figures(figureIndex).GridLayout.Children, newFig);
-                saveas(newFig, filename, 'fig');
-                close(newFig);
-                app.Label.Text = sprintf('Saved: %s', file);
-            catch ME
-                uialert(app.UIFigure, sprintf('Save failed: %s', ME.message), 'Save Error');
-            end
-        end
-        
         function updatePannerVisibility(app)
             figIds = fieldnames(app.Figures);
             for i = 1:length(figIds)
@@ -822,6 +568,7 @@ classdef SupportFunctions
 
         function node = findTreeNode(app, text)
             node = [];
+            % Parcourir tous les nodes de l'arbre
             allNodes = findall(app.Tree, '-property', 'Text');
             for i = 1:length(allNodes)
                 if strcmp(allNodes(i).Text, text)
@@ -882,109 +629,68 @@ classdef SupportFunctions
             end
         end
         
+        function filterScatterByTime(app, figIndex, axFieldName, timeMin, timeMax)
+            axInfo = app.Figures(figIndex).Axes.(axFieldName);
+            if ~strcmp(axInfo.Type, 'scatter') || length(axInfo.Variables) < 2, return; end
+            
+            dataManager = app.CurrentData;
+            timeData = dataManager.getDataForPlotting('time_sn');
+            timeMask = (timeData >= timeMin) & (timeData <= timeMax);
+            
+            if ~any(timeMask), return; end
+            
+            xVar = axInfo.Variables{1};
+            yVars = axInfo.Variables(2:end);
+            xData = dataManager.getDataForPlotting(xVar);
+            
+            cla(axInfo.Handle);
+            hold(axInfo.Handle, 'on');
+            for i = 1:length(yVars)
+                yData = dataManager.getDataForPlotting(yVars{i});
+                scatter(axInfo.Handle, xData(timeMask), yData(timeMask), 'filled', 'DisplayName', yVars{i});
+            end
+            hold(axInfo.Handle, 'off');
+            xlabel(axInfo.Handle, xVar);
+            if length(yVars) > 1, legend(axInfo.Handle, 'show'); end
+        end
+
         function updateAxesPlot(app, figureIndex, axesId)
-            fprintf('=== UPDATE AXES PLOT - STRICT MODE ===\n');
-            fprintf('figureIndex: %d, axesId: %d\n', figureIndex, axesId);
-            
-            % Vérifications de base
-            if figureIndex > length(app.Figures) || ~isfield(app.Figures(figureIndex), 'Axes')
-                error('Figure not found or no Axes field');
-            end
-            
             axFieldName = sprintf('axes%d', axesId);
-            if ~isfield(app.Figures(figureIndex).Axes, axFieldName)
-                error('Axes field %s not found', axFieldName);
-            end
-            
             axesInfo = app.Figures(figureIndex).Axes.(axFieldName);
             axesHandle = axesInfo.Handle;
             dataManager = app.CurrentData;
             
-            fprintf('Axes type: %s\n', axesInfo.Type);
-            fprintf('Axes variables: %s\n', strjoin(axesInfo.Variables, ', '));
-            
-            % VÉRIFICATIONS STRICTES
-            if isempty(dataManager)
-                error('dataManager is empty - Load data first!');
-            end
-            
-            if isempty(dataManager.RawData)
-                error('RawData is empty - Data loading failed!');
-            end
-            
-            if isempty(axesInfo.Variables)
-                error('No variables selected - Use Edit Axes to select variables!');
-            end
-            
-            % Vider l'axe
             cla(axesHandle);
             
-            % OBLIGATION : utiliser uniquement les vraies données
-            time = dataManager.getDataForPlotting('time_sn');
-            fprintf('Time data length: %d\n', length(time));
-            
-            hold(axesHandle, 'on');
-            colors = ['b', 'r', 'g', 'm', 'c', 'k'];
-            legendEntries = {};
-            successCount = 0;
-            
-            for i = 1:length(axesInfo.Variables)
-                varName = axesInfo.Variables{i};
-                fprintf('Processing variable: %s\n', varName);
+            if strcmp(axesInfo.Type, 'scatter') && length(axesInfo.Variables) >= 2
+                % Scatter avec X spécifique
+                xVar = axesInfo.Variables{1};
+                yVars = axesInfo.Variables(2:end);
+                xData = dataManager.getDataForPlotting(xVar);
                 
-                try
-                    % TENTATIVE D'ACCÈS AUX DONNÉES RÉELLES
-                    yData = dataManager.getDataForPlotting(varName);
-                    fprintf('SUCCESS: %s - length: %d, range: [%.3f, %.3f]\n', ...
-                        varName, length(yData), min(yData), max(yData));
-                    
-                    color = colors(mod(i-1, length(colors)) + 1);
-                    
-                    if strcmp(axesInfo.Type, 'line')
-                        plot(axesHandle, time, yData, [color, '-'], 'LineWidth', 1.5, ...
-                            'DisplayName', varName);
-                    else
-                        scatter(axesHandle, time, yData, 'filled', ...
-                            'DisplayName', varName);
-                    end
-                    legendEntries{end+1} = varName;
-                    successCount = successCount + 1;
-                    
-                catch varError
-                    % ÉCHEC CRITIQUE - ARRÊTER TOUT
-                    fprintf('CRITICAL ERROR with variable %s: %s\n', varName, varError.message);
-                    cla(axesHandle);
-                    text(axesHandle, 0.5, 0.5, sprintf('ERROR: %s\nnot found in data', varName), ...
-                        'HorizontalAlignment', 'center', 'Units', 'normalized');
-                    title(axesHandle, 'DATA ERROR');
-                    drawnow;
-                    return;  % ← ARRÊTER IMMÉDIATEMENT
+                hold(axesHandle, 'on');
+                colors = ['b', 'r', 'g', 'm', 'c', 'k'];
+                for i = 1:length(yVars)
+                    yData = dataManager.getDataForPlotting(yVars{i});
+                    scatter(axesHandle, xData, yData, 'filled', 'DisplayName', yVars{i});
                 end
-            end
-            hold(axesHandle, 'off');
-            
-            % Si au moins une variable a réussi
-            if successCount > 0
-                if length(legendEntries) > 1
-                    legend(axesHandle, 'show');
-                elseif isscalar(legendEntries)
-                    ylabel(axesHandle, sprintf('%s (%s)', legendEntries{1}, ...
-                        dataManager.getUnit(legendEntries{1})));
-                end
-                
-                title(axesHandle, sprintf('%s Plot - Real Flight Data', axesInfo.Type));
-                xlabel(axesHandle, 'Time (s)');
-                grid(axesHandle, 'on');
-                
-                fprintf('SUCCESS: %d/%d variables plotted with REAL data\n', successCount, length(axesInfo.Variables));
+                hold(axesHandle, 'off');
+                xlabel(axesHandle, xVar);
             else
-                % Aucune variable n'a fonctionné
-                text(axesHandle, 0.5, 0.5, 'ALL VARIABLES FAILED\nCheck data loading', ...
-                    'HorizontalAlignment', 'center', 'Units', 'normalized');
-                title(axesHandle, 'ALL DATA ERRORS');
+                % Line plot normal
+                time = dataManager.getDataForPlotting('time_sn');
+                hold(axesHandle, 'on');
+                for i = 1:length(axesInfo.Variables)
+                    yData = dataManager.getDataForPlotting(axesInfo.Variables{i});
+                    plot(axesHandle, time, yData, 'DisplayName', axesInfo.Variables{i});
+                end
+                hold(axesHandle, 'off');
+                xlabel(axesHandle, 'Time (s)');
             end
             
-            drawnow;
+            if length(axesInfo.Variables) > 1, legend(axesHandle, 'show'); end
+            grid(axesHandle, 'on');
         end
+
     end
 end
