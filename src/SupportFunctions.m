@@ -18,15 +18,18 @@ classdef SupportFunctions
                 
                 % Grid layout
                 gridLayout = uigridlayout(newTab, [3, 2]);
-                gridLayout.RowHeight = {'1x', '1x', '0.15x'};
+                gridLayout.RowHeight = {'1x', '1x', '0.3x'};
                 gridLayout.ColumnWidth = {'1x', '1x'};
                 
                 % Créer panner
-                pannerPanel = uipanel(gridLayout);
-                pannerPanel.Layout.Row = 3;
-                pannerPanel.Layout.Column = [1, 2];
-                pannerPanel.Title = 'Altitude Panner';
-                pannerPanel.Visible = app.PannerVisible;
+                pannerAxes = uiaxes(gridLayout);
+                pannerAxes.Layout.Row = 3;
+                pannerAxes.Layout.Column = [1, 2];
+                pannerAxes.XLabel.String = 'Time (s)';
+                pannerAxes.YLabel.String = 'Altitude (m)';
+                pannerAxes.Title.String = 'Altitude Panner';
+                pannerAxes.Visible = app.PannerVisible;  % ← Contrôle de visibilité direct
+                grid(pannerAxes, 'on');
                 
                 % Stocker dans un tableau (plus simple)
                 newFigure = struct();
@@ -34,9 +37,16 @@ classdef SupportFunctions
                 newFigure.Tab = newTab;
                 newFigure.GridLayout = gridLayout;
                 newFigure.Axes = struct();
-                newFigure.Panner = pannerPanel;
+                newFigure.Panner = pannerAxes;  % ← Stocker l'axe, pas le panel
                 
+                % AJOUTER au tableau et obtenir l'index
                 app.Figures = [app.Figures, newFigure];
+                figureIndex = length(app.Figures);  % ← MAINTENANT figureIndex est défini !
+                
+                % Remplir le panner avec les données si disponibles
+                if ~isempty(app.CurrentData)
+                    SupportFunctions.updatePannerData(app, figureIndex);  % ← Maintenant ça marche !
+                end
                 
                 % Ajouter à l'arbre
                 figNode = uitreenode(app.Tree, 'Text', sprintf('Figure %d', figId));
@@ -46,12 +56,83 @@ classdef SupportFunctions
                 app.SelectedNode = figNode;
                 
                 app.Label.Text = sprintf('Figure %d created - READY!', figId);
+                fprintf('Figure %d created at index %d\n', figId, figureIndex);
                 
             catch ME
+                fprintf('Error in createNewFigure: %s\n', ME.message);
                 uialert(app.UIFigure, ME.message, 'Creation Error');
             end
         end
         
+        function updatePannerData(app, idx)
+            fprintf('Updating panner for figure index: %d\n', idx);
+            
+            % Vérifications de base
+            if isempty(app.Figures) || idx > length(app.Figures) || idx < 1
+                fprintf('ERROR: Invalid figure index %d\n', idx);
+                return;
+            end
+            
+            if ~isfield(app.Figures(idx), 'Panner')
+                fprintf('ERROR: No Panner field in figure %d\n', idx);
+                return;
+            end
+            
+            if isempty(app.CurrentData)
+                fprintf('No data loaded for panner %d\n', idx);
+                return;
+            end
+            
+            try
+                pannerAxes = app.Figures(idx).Panner;
+                dataManager = app.CurrentData;
+                
+                % Obtenir les données
+                time = dataManager.getDataForPlotting('time_sn');
+                altitude = dataManager.getDataForPlotting('alt_m');
+                
+                % Plot des données
+                cla(pannerAxes);
+                plot(pannerAxes, time, altitude, 'b-', 'LineWidth', 1.5);
+                
+                % Configuration de l'axe
+                pannerAxes.XLabel.String = 'Time (s)';
+                pannerAxes.YLabel.String = 'Altitude (m)';
+                pannerAxes.Title.String = 'Altitude Panner - Drag rectangle to zoom';
+                grid(pannerAxes, 'on');
+                
+                % Créer le rectangle transparent (viewfinder)
+                xRange = range(time);
+                yRange = range(altitude);
+                
+                % Rectangle couvrant 50% de la vue au centre
+                rectX = min(time) + xRange * 0.25;
+                rectY = min(altitude) + yRange * 0.25;
+                rectWidth = xRange * 0.5;
+                rectHeight = yRange * 0.5;
+                
+                % Rectangle semi-transparent
+                rect = rectangle(pannerAxes, 'Position', [rectX, rectY, rectWidth, rectHeight], ...
+                    'FaceColor', [0.1, 0.1, 0.8, 0.3], ...  % Bleu transparent
+                    'EdgeColor', 'blue', ...
+                    'LineWidth', 2, ...
+                    'LineStyle', '-');
+                
+                % Stocker le rectangle et les données de référence
+                app.Figures(idx).PannerRect = rect;
+                app.Figures(idx).PannerTimeData = time;
+                app.Figures(idx).PannerAltData = altitude;
+                
+                % Configurer les interactions
+                SupportFunctions.setupPannerInteractions(app, idx);
+                
+                fprintf('Panner %d updated with interactive rectangle\n', idx);
+                
+            catch ME
+                fprintf('Error updating panner %d: %s\n', idx, ME.message);
+            end
+        end
+
         function addNewAxes(app, figId, type)
             % Vérification plus robuste
             if isempty(figId)
@@ -283,7 +364,7 @@ classdef SupportFunctions
             cla(axesHandle);
             
             try
-                time = dataManager.getDataForPlotting('time_s');
+                time = dataManager.getDataForPlotting('time_sn');
                 
                 if strcmp(axesInfo.Type, 'line')
                     if ismember('ax_m_s2', dataManager.RawData.Properties.VariableNames)
@@ -386,6 +467,8 @@ classdef SupportFunctions
             end
         end
 
+        
+
         function figureIndex = findFigureIndex(app, figId)
             figureIndex = [];
             for i = 1:length(app.Figures)
@@ -397,96 +480,107 @@ classdef SupportFunctions
         end
         
         function updateAxesPlot(app, figureIndex, axesId)
-            disp(['=== UPDATE AXES PLOT DEBUG ===']);
-            disp(['figureIndex: ', num2str(figureIndex)]);
-            disp(['axesId: ', num2str(axesId)]);
+            fprintf('=== UPDATE AXES PLOT - STRICT MODE ===\n');
+            fprintf('figureIndex: %d, axesId: %d\n', figureIndex, axesId);
             
+            % Vérifications de base
             if figureIndex > length(app.Figures) || ~isfield(app.Figures(figureIndex), 'Axes')
-                disp('ERROR: Figure not found or no Axes field');
-                return;
+                error('Figure not found or no Axes field');
             end
             
             axFieldName = sprintf('axes%d', axesId);
             if ~isfield(app.Figures(figureIndex).Axes, axFieldName)
-                disp(['ERROR: Axes field ', axFieldName, ' not found']);
-                return;
+                error('Axes field %s not found', axFieldName);
             end
             
             axesInfo = app.Figures(figureIndex).Axes.(axFieldName);
             axesHandle = axesInfo.Handle;
             dataManager = app.CurrentData;
             
-            disp(['Axes type: ', axesInfo.Type]);
-            disp(['Axes variables: ', strjoin(axesInfo.Variables, ', ')]);
+            fprintf('Axes type: %s\n', axesInfo.Type);
+            fprintf('Axes variables: %s\n', strjoin(axesInfo.Variables, ', '));
+            
+            % VÉRIFICATIONS STRICTES
+            if isempty(dataManager)
+                error('dataManager is empty - Load data first!');
+            end
+            
+            if isempty(dataManager.RawData)
+                error('RawData is empty - Data loading failed!');
+            end
+            
+            if isempty(axesInfo.Variables)
+                error('No variables selected - Use Edit Axes to select variables!');
+            end
             
             % Vider l'axe
             cla(axesHandle);
             
-            if isempty(axesInfo.Variables)
-                disp('No variables selected - plotting sample data');
-                SupportFunctions.plotSampleData(axesHandle, axesInfo.Type);
-                return;
-            end
+            % OBLIGATION : utiliser uniquement les vraies données
+            time = dataManager.getDataForPlotting('time_sn');
+            fprintf('Time data length: %d\n', length(time));
             
-            try
-                time = dataManager.getDataForPlotting('time_s');
-                disp(['Time data length: ', num2str(length(time))]);
+            hold(axesHandle, 'on');
+            colors = ['b', 'r', 'g', 'm', 'c', 'k'];
+            legendEntries = {};
+            successCount = 0;
+            
+            for i = 1:length(axesInfo.Variables)
+                varName = axesInfo.Variables{i};
+                fprintf('Processing variable: %s\n', varName);
                 
-                hold(axesHandle, 'on');
-                
-                colors = ['b', 'r', 'g', 'm', 'c', 'k'];
-                legendEntries = {};
-                
-                for i = 1:length(axesInfo.Variables)
-                    varName = axesInfo.Variables{i};
-                    disp(['Processing variable: ', varName]);
+                try
+                    % TENTATIVE D'ACCÈS AUX DONNÉES RÉELLES
+                    yData = dataManager.getDataForPlotting(varName);
+                    fprintf('SUCCESS: %s - length: %d, range: [%.3f, %.3f]\n', ...
+                        varName, length(yData), min(yData), max(yData));
                     
-                    try
-                        yData = dataManager.getDataForPlotting(varName);
-                        disp(['Data length for ', varName, ': ', num2str(length(yData))]);
-                        
-                        color = colors(mod(i-1, length(colors)) + 1);
-                        
-                        if strcmp(axesInfo.Type, 'line')
-                            plot(axesHandle, time, yData, [color, '-'], 'LineWidth', 1.5, ...
-                                'DisplayName', varName);
-                        else
-                            scatter(axesHandle, time, yData, 'filled', ...
-                                'DisplayName', varName);
-                        end
-                        legendEntries{end+1} = varName;
-                        
-                    catch varError
-                        disp(['ERROR processing variable ', varName, ': ', varError.message]);
+                    color = colors(mod(i-1, length(colors)) + 1);
+                    
+                    if strcmp(axesInfo.Type, 'line')
+                        plot(axesHandle, time, yData, [color, '-'], 'LineWidth', 1.5, ...
+                            'DisplayName', varName);
+                    else
+                        scatter(axesHandle, time, yData, 'filled', ...
+                            'DisplayName', varName);
                     end
+                    legendEntries{end+1} = varName;
+                    successCount = successCount + 1;
+                    
+                catch varError
+                    % ÉCHEC CRITIQUE - ARRÊTER TOUT
+                    fprintf('CRITICAL ERROR with variable %s: %s\n', varName, varError.message);
+                    cla(axesHandle);
+                    text(axesHandle, 0.5, 0.5, sprintf('ERROR: %s\nnot found in data', varName), ...
+                        'HorizontalAlignment', 'center', 'Units', 'normalized');
+                    title(axesHandle, 'DATA ERROR');
+                    drawnow;
+                    return;  % ← ARRÊTER IMMÉDIATEMENT
                 end
-                hold(axesHandle, 'off');
-                
-                % Configurer la légende
+            end
+            hold(axesHandle, 'off');
+            
+            % Si au moins une variable a réussi
+            if successCount > 0
                 if length(legendEntries) > 1
                     legend(axesHandle, 'show');
-                elseif isscalar(legendEntries)
+                elseif length(legendEntries) == 1
                     ylabel(axesHandle, sprintf('%s (%s)', legendEntries{1}, ...
                         dataManager.getUnit(legendEntries{1})));
                 end
                 
-                % Titre et grille
-                if strcmp(axesInfo.Type, 'line')
-                    title(axesHandle, 'Line Plot - Flight Data');
-                else
-                    title(axesHandle, 'Scatter Plot - Flight Data');
-                end
+                title(axesHandle, sprintf('%s Plot - Real Flight Data', axesInfo.Type));
                 xlabel(axesHandle, 'Time (s)');
                 grid(axesHandle, 'on');
                 
-                disp('SUCCESS: Axes plot updated');
-                
-            catch ME
-                disp(['ERROR in updateAxesPlot: ', ME.message]);
-                SupportFunctions.plotSampleData(axesHandle, axesInfo.Type);
+                fprintf('SUCCESS: %d/%d variables plotted with REAL data\n', successCount, length(axesInfo.Variables));
+            else
+                % Aucune variable n'a fonctionné
+                text(axesHandle, 0.5, 0.5, 'ALL VARIABLES FAILED\nCheck data loading', ...
+                    'HorizontalAlignment', 'center', 'Units', 'normalized');
+                title(axesHandle, 'ALL DATA ERRORS');
             end
             
-            % Forcer le rafraîchissement
             drawnow;
         end
     end
