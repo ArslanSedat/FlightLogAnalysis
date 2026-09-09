@@ -1,4 +1,4 @@
-# Flight Log Analysis Application (BYG_3)
+# Flight Log Analysis Application
 
 ## Overview
 
@@ -29,7 +29,7 @@ README.md # Documentation (this file)
 ## How to Run the App
 
 1. Open MATLAB.
-2. In the *BYG_3* Folder, navigate to *FlightLogAnalysisApplication.mlapp*.
+2. Navigate to *FlightLogAnalysisApplication.mlapp*.
 3. Double-click on the file.
 4. App Designer opens.
 5. Click on **Run** button at the top.
@@ -153,7 +153,7 @@ MATLAB R2023a or newer version
 ## Author
 
 Sedat ARSLAN
-AI/Software Engineer - MATLAB Project for Baykar
+AI Engineer
 
 ## References
 
